@@ -74,7 +74,7 @@ class ConfigurationTab():
                                    "deepseek-chat","deepseek-reasoner",
                                    "gpt-4o-mini", "gpt-4o",
                                    "glm-4-flash", "glm-4-air",
-                                   "hunyuan-lite", "hunyuan-standard"
+                                   "hunyuan-lite", "hunyuan-standard",
                                    "gemini-1.5-flash", "gemini-2.0-flash", "gemini-2.5-flash"]
         
         # 支持的模型厂商列表
