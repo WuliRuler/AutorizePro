@@ -70,11 +70,15 @@ class ConfigurationTab():
         self._extender.modelSelectButton = JButton("+", actionPerformed=self.showModelOptions)
         self._extender.modelSelectButton.setBounds(145, yPos, 25, height)
         
-        self._predefinedOptions = ["qwen-turbo", "qwen-plus", "qwen-max", "deepseek-chat","deepseek-reasoner",
-                                  "gpt-4o-mini", "gpt-4o", "glm-4-flash", "glm-4-air", "hunyuan-lite", "hunyuan-standard"]
+        self._predefinedOptions = ["qwen-turbo", "qwen-plus", "qwen-max",
+                                   "deepseek-chat","deepseek-reasoner",
+                                   "gpt-4o-mini", "gpt-4o",
+                                   "glm-4-flash", "glm-4-air",
+                                   "hunyuan-lite", "hunyuan-standard"
+                                   "gemini-1.5-flash", "gemini-2.0-flash", "gemini-2.5-flash"]
         
         # 支持的模型厂商列表
-        self._supportedVendors = ["qwen", "deepseek", "gpt", "glm", "hunyuan"]
+        self._supportedVendors = ["qwen", "deepseek", "gpt", "glm", "hunyuan", "gemini"]
         
         self._modelPopupMenu = JPopupMenu()
 

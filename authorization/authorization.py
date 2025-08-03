@@ -973,6 +973,7 @@ def request_dashscope_api(self, api_key, modelName, orgUrl, request_body):
         "gpt": "https://api.openai.com/v1/chat/completions",
         "glm": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
         "hunyuan": "https://api.hunyuan.cloud.tencent.com/v1/chat/completions",
+        "gemini": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
         "default": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
     }
     
@@ -1016,10 +1017,6 @@ def request_dashscope_api(self, api_key, modelName, orgUrl, request_body):
             # 设置通用请求头
             connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
             connection.setRequestProperty("Authorization", "Bearer " + api_key)
-            
-            # 根据不同模型设置特定请求头
-            if modelName.lower().startswith("glm"):
-                connection.setRequestProperty("User-Agent", "AutorizePro/1.0")
             
             outputStream = connection.getOutputStream()
             writer = OutputStreamWriter(outputStream, "UTF-8")
