@@ -847,21 +847,39 @@ def extract_res_value(self, response_string):
 
 
 def generate_prompt(self, modelName, system_prompt, user_prompt):
-    return u"""
-    {
-        "model": "%s",
-        "messages": [
-            {
-                "role": "system",
-                "content": "%s"
-            },
-            {
-                "role": "user", 
-                "content": "%s"
-            }
-        ]
-    }
-        """ % (modelName, system_prompt, user_prompt)
+    if modelName.lower().startswith("gemini"):
+        return u"""
+        {
+            "model": "%s",
+            "reasoning_effort": "none",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "%s"
+                },
+                {
+                    "role": "user", 
+                    "content": "%s"
+                }
+            ]
+        }
+            """ % (modelName, system_prompt, user_prompt)
+    else:
+        return u"""
+        {
+            "model": "%s",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "%s"
+                },
+                {
+                    "role": "user", 
+                    "content": "%s"
+                }
+            ]
+        }
+            """ % (modelName, system_prompt, user_prompt)
 
 
 def call_dashscope_api(self, apiKey, modelName, oriUrl, oriBody, res1, res2):
