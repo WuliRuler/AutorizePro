@@ -13,6 +13,7 @@
 ### 工具亮点
 - **内置 AI 分析模块(可选项) ，将工具原始误报率从 95% 降低至 5% ，从大量误报分析中解脱出来**
 - **保密性：支持配置为公司内部部署模型进行分析**
+- **🌟 支持自定义 API：可配置任意 OpenAI 兼容的 API 端点，支持本地部署模型（如 Ollama）或其他厂商模型**
 - **工具默认排除静态资源、html页面、错误状态码等非接口资源，无需人工配置**
 - **支持导出越权测试报告，支持html、csv格式**
 - **工具日志可查看每个接口 AI 判定的原因，方便反馈调优**
@@ -49,7 +50,10 @@
     
     3. 如果不需要进行未授权的测试（即不带任何 cookie 的请求），可以取消勾选 Check unauthenticated (默认开启未授权检测)。
     
-    4. 选择模型，填写对应API Key 后，勾选复选框则启用 AI 分析，结果将展示在左侧 AI. Analyzer 列。
+    4. 配置 AI 分析：
+       - **使用默认 API**：选择模型，填写对应 API Key，勾选"启用 AI"复选框
+       - **使用自定义 API**：在 URL 输入框填写自定义 API 地址（如 `http://localhost:11434/v1/chat/completions`），填写 API Key（如不需要可留空），输入模型名称，勾选"启用 AI"复选框
+       - AI 分析结果将展示在左侧 AI. Analyzer 列
     
     5. 点击 AutorizePro is off 按钮启用插件，即可开始测试。
     
@@ -94,6 +98,78 @@
     - AI分析功能需要先开通模型调用服务，在 [阿里云百炼首页顶部提示](https://bailian.console.aliyun.com/#/home) 进行开通：
 ![tongyi](imgs/tongyi.png)
     - [阿里云通义千问API计费说明，新开通的都有 100万tokens 的免费额度](https://help.aliyun.com/zh/model-studio/billing-for-model-studio) ( 个人测试消耗示例：在插件开发调试期间全天较高频率测试且没有限制域名，全天消耗总费用**0.38元**)
+
+## 🌐 自定义 API 配置（支持本地模型和其他厂商）
+AutorizePro 支持配置自定义 API 端点，允许您使用本地部署的模型（如 Ollama）或其他厂商的模型服务。
+
+### 使用场景
+- **本地部署模型**：使用 Ollama、LocalAI 等本地大模型服务，无需 API Key，数据不出本地
+- **企业私有模型**：使用公司内部部署的模型服务，保障数据安全
+- **其他云服务商**：使用其他支持 OpenAI 兼容格式的模型服务
+
+### 配置步骤
+1. **填写 API URL**：在配置页面的 "URL:" 输入框中填写您的 API 端点地址
+   - 示例（Ollama）：`http://localhost:11434/v1/chat/completions`
+   - 示例（自定义服务）：`https://api.your-company.com/v1/chat/completions`
+2. **填写 API Key**（可选）：
+   - 如果您的 API 需要认证，在 "KEY:" 输入框填写 API Key
+   - 如果使用本地模型（如 Ollama），可留空
+3. **填写模型名称**：在模型输入框中填写您要使用的模型名称（使用自定义 API 时，可填写任意模型名称）
+4. **启用 AI**：勾选"启用 AI"复选框
+
+### API 格式要求
+自定义 API 必须兼容 OpenAI 的 `/v1/chat/completions` 格式：
+
+**请求格式**：
+```json
+{
+    "model": "your-model-name",
+    "messages": [
+        {"role": "system", "content": "..."},
+        {"role": "user", "content": "..."}
+    ]
+}
+```
+
+**响应格式**：
+```json
+{
+    "choices": [{
+        "message": {
+            "content": "{\"res\":\"true\",\"reason\":\"...\"}"
+        }
+    }]
+}
+```
+
+### 使用示例
+
+**示例 1：使用 Ollama 本地模型**
+```
+URL: http://localhost:11434/v1/chat/completions
+KEY: （留空）
+模型: llama3
+```
+
+**示例 2：使用企业私有模型**
+```
+URL: https://api.company.com/v1/chat/completions
+KEY: sk-xxxxxxxxxxxxx
+模型: company-model-v2
+```
+
+**示例 3：使用其他云服务商**
+```
+URL: https://api.provider.com/v1/chat/completions
+KEY: your-api-key-here
+模型: provider-model-name
+```
+
+### 注意事项
+- ⚠️ 确保您的 API 端点支持 OpenAI 兼容格式
+- ⚠️ 如果 API 需要认证，请确保 API Key 正确
+- ⚠️ 使用自定义 API 时，模型名称可以是任意字符串，会原样传递给 API
+- 🌟 使用本地模型时，数据不会离开您的环境，适合敏感数据场景
 
 ## ⛪ Discussion
 * 欢迎讨论任何关于工具相关的问题[点我](https://github.com/sule01u/AutorizePro/discussions)

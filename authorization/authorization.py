@@ -1131,10 +1131,20 @@ def call_dashscope_api(self, apiKey, modelName, oriUrl, oriBody, res1, res2, cus
                 if url_text is not None:
                     # Jython 2.7: Java String的strip()方法可用，转换为Python字符串
                     customApiUrl = str(url_text).strip()
-                    # 如果是占位符文本，视为空
-                    placeholder = "http://localhost:11434/v1/chat/completions"
-                    if customApiUrl == placeholder:
-                        customApiUrl = ""
+                    # 检查是否是占位符文本（通过文本颜色判断更准确）
+                    # 如果是占位符文本（灰色），视为空
+                    try:
+                        from java.awt import Color
+                        field_color = self.aiApiUrlField.getForeground()
+                        placeholder = "http://localhost:11434/v1/chat/completions"
+                        # 如果文本颜色是灰色，或者文本等于占位符且为空字符串，视为占位符
+                        if (field_color == Color.GRAY) or (customApiUrl == placeholder and not customApiUrl):
+                            customApiUrl = ""
+                    except:
+                        # 如果颜色检查失败，使用字符串比较作为降级方案
+                        placeholder = "http://localhost:11434/v1/chat/completions"
+                        if customApiUrl == placeholder:
+                            customApiUrl = ""
                 else:
                     customApiUrl = ""
         except:

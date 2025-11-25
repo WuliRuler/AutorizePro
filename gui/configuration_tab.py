@@ -773,10 +773,19 @@ class ConfigurationTab():
                     url_text = self._extender.aiApiUrlField.getText()
                     if url_text is not None:
                         custom_api_url = str(url_text).strip()
-                        # 如果是占位符文本，视为空
-                        placeholder = get_text("ai_api_url_placeholder", "http://localhost:11434/v1/chat/completions")
-                        if custom_api_url == placeholder:
-                            custom_api_url = ""
+                        # 检查是否是占位符文本（通过文本颜色判断更准确）
+                        try:
+                            from java.awt import Color
+                            field_color = self._extender.aiApiUrlField.getForeground()
+                            placeholder = get_text("ai_api_url_placeholder", "http://localhost:11434/v1/chat/completions")
+                            # 如果文本颜色是灰色，或者文本等于占位符且为空，视为占位符
+                            if (field_color == Color.GRAY) or (custom_api_url == placeholder and not custom_api_url):
+                                custom_api_url = ""
+                        except:
+                            # 如果颜色检查失败，使用字符串比较作为降级方案
+                            placeholder = get_text("ai_api_url_placeholder", "http://localhost:11434/v1/chat/completions")
+                            if custom_api_url == placeholder:
+                                custom_api_url = ""
             except:
                 pass
             

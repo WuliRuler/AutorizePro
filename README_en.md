@@ -12,6 +12,7 @@
 ### Tool Highlights
 - **Built-in AI analysis module (optional): reduces the original false positive rate from 95% to 5%, freeing users from manual result triage.**
 - **Privacy-friendly: supports analysis using self-hosted/private LLMs within your organization.**
+- **🌟 Custom API Support: Configure any OpenAI-compatible API endpoint, supporting locally deployed models (e.g., Ollama) or other vendor models.**
 - **Automatically excludes static resources, HTML pages, and error status codes by default—no manual filtering needed.**
 - **Supports exporting authorization testing reports in both HTML and CSV formats.**
 - **Detailed logs explain AI decisions per request, making it easy to review and fine-tune detection logic.**
@@ -47,7 +48,10 @@
 	
     3.	If you do not want to perform unauthenticated testing (i.e., requests without any cookies), uncheck Check unauthenticated (enabled by default).
 	
-    4.	Select an AI model and enter the corresponding API Key. Then, check the checkbox to enable AI Analysis. Results will appear in the left-side AI. Analyzer column.
+    4.	Configure AI Analysis:
+       - **Using Default API**: Select a model, enter the corresponding API Key, then check the "Enable AI" checkbox
+       - **Using Custom API**: Enter your custom API URL in the URL field (e.g., `http://localhost:11434/v1/chat/completions`), enter the API Key (leave empty if not required), enter the model name, then check the "Enable AI" checkbox
+       - AI analysis results will appear in the left-side AI. Analyzer column
 	
     5.	Click the AutorizePro is off button to enable the plugin and start testing.
 	
@@ -87,6 +91,78 @@
 - ⚠️ Note: When enabling AI analysis, you should configure the intercepted domains/rules in Interception Filters to avoid cost overruns caused by analyzing irrelevant sites.
 - Personal testing cost example: during high-frequency testing throughout a full day without domain restrictions, the total cost was **¥0.38** (tongyi qwen-plus).
 - If you are outside China, you can choose the GPT or use alibabacloud model->[bailian](https://bailian.console.alibabacloud.com/)
+
+## 🌐 Custom API Configuration (Support for Local Models and Other Vendors)
+AutorizePro supports custom API endpoints, allowing you to use locally deployed models (e.g., Ollama) or other vendor model services.
+
+### Use Cases
+- **Locally Deployed Models**: Use local LLM services like Ollama or LocalAI without API keys, keeping data local
+- **Enterprise Private Models**: Use company-internal model services for enhanced data security
+- **Other Cloud Providers**: Use other model services that support OpenAI-compatible formats
+
+### Configuration Steps
+1. **Enter API URL**: In the configuration page, enter your API endpoint address in the "URL:" field
+   - Example (Ollama): `http://localhost:11434/v1/chat/completions`
+   - Example (Custom Service): `https://api.your-company.com/v1/chat/completions`
+2. **Enter API Key** (Optional):
+   - If your API requires authentication, enter the API Key in the "KEY:" field
+   - If using local models (e.g., Ollama), leave it empty
+3. **Enter Model Name**: Enter the model name you want to use in the model field (when using custom API, any model name is allowed)
+4. **Enable AI**: Check the "Enable AI" checkbox
+
+### API Format Requirements
+Custom APIs must be compatible with OpenAI's `/v1/chat/completions` format:
+
+**Request Format**:
+```json
+{
+    "model": "your-model-name",
+    "messages": [
+        {"role": "system", "content": "..."},
+        {"role": "user", "content": "..."}
+    ]
+}
+```
+
+**Response Format**:
+```json
+{
+    "choices": [{
+        "message": {
+            "content": "{\"res\":\"true\",\"reason\":\"...\"}"
+        }
+    }]
+}
+```
+
+### Usage Examples
+
+**Example 1: Using Ollama Local Model**
+```
+URL: http://localhost:11434/v1/chat/completions
+KEY: (leave empty)
+Model: llama3
+```
+
+**Example 2: Using Enterprise Private Model**
+```
+URL: https://api.company.com/v1/chat/completions
+KEY: sk-xxxxxxxxxxxxx
+Model: company-model-v2
+```
+
+**Example 3: Using Other Cloud Provider**
+```
+URL: https://api.provider.com/v1/chat/completions
+KEY: your-api-key-here
+Model: provider-model-name
+```
+
+### Notes
+- ⚠️ Ensure your API endpoint supports OpenAI-compatible format
+- ⚠️ If the API requires authentication, ensure the API Key is correct
+- ⚠️ When using custom API, the model name can be any string and will be passed to the API as-is
+- 🌟 When using local models, data never leaves your environment, suitable for sensitive data scenarios
 
 
 ## ⛪ Discussion
