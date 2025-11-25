@@ -22,6 +22,40 @@ from java.net import SocketException
 from javax.swing.event import DocumentListener
 from threading import Lock
 
+# 导入异常处理工具
+try:
+    from helpers.exceptions import (
+        handle_encoding_error, safe_json_parse, log_exception,
+        is_network_error, CacheException, AIAnalysisException
+    )
+except ImportError:
+    # 兼容处理：如果导入失败，使用简单的实现
+    def handle_encoding_error(data, operation="encode", fallback_value=""):
+        try:
+            if operation == "encode":
+                return data.encode('utf-8') if isinstance(data, unicode) else str(data)
+            return data
+        except:
+            return fallback_value
+    
+    def safe_json_parse(json_string, default=None):
+        try:
+            return json.loads(json_string) if json_string else default
+        except:
+            return default
+    
+    def log_exception(exception, context="", level="ERROR"):
+        print("[%s] %s: %s" % (level, context, str(exception)))
+    
+    def is_network_error(exception):
+        return 'network' in str(exception).lower() or 'connection' in str(exception).lower()
+    
+    class CacheException(Exception):
+        pass
+    
+    class AIAnalysisException(Exception):
+        pass
+
 reload(sys)
 
 if (sys.version_info[0] == 2):
@@ -382,7 +416,13 @@ def pre_check(self, oldStatusCode, newStatusCode, oldContent, newContent, modify
                 statusCode = status_parts[1].strip()
             else:
                 statusCode = newStatusCode
-        except (IndexError, AttributeError) as e:
+        except (IndexError, ValueError) as e:
+            # 状态码格式错误
+            print("[PRE_CHECK] Invalid status code format for %s: %s" % (request_type, str(e)))
+            return False
+        except AttributeError as e:
+            # 状态码不是字符串
+            print("[PRE_CHECK] Status code is not string for %s: %s" % (request_type, str(e)))
             return False
             
         if statusCode not in all_allowed_codes:
@@ -398,7 +438,13 @@ def pre_check(self, oldStatusCode, newStatusCode, oldContent, newContent, modify
                 new_type_valid = detect_response_type(self, newContent, oriUrl)
                 if new_type_valid:
                     content_type_check = True
+        except (AttributeError, TypeError) as e:
+            # 内容类型检测失败：可能是None或非字符串类型
+            print("[PRE_CHECK] Content type detection failed for %s: %s" % (request_type, str(e)[:50]))
+            return False
         except Exception as e:
+            # 其他未预期错误
+            log_exception(e, context="Content type check for %s" % request_type, level="WARNING")
             return False
             
         if not content_type_check:
@@ -416,7 +462,13 @@ def pre_check(self, oldStatusCode, newStatusCode, oldContent, newContent, modify
             return False
             
         return True
+    except (AttributeError, TypeError) as e:
+        # 类型错误：参数可能为None或错误类型
+        print("[PRE_CHECK] Type error in pre_check for %s: %s" % (request_type, str(e)))
+        return False
     except Exception as e:
+        # 其他未预期错误
+        log_exception(e, context="pre_check for %s" % request_type, level="ERROR")
         return False
 
 
@@ -425,51 +477,136 @@ def checkBypass(self, oriUrl, oriBody, oldStatusCode, newStatusCode, oldContent,
     AI_res = ""
     if isAuthorized and self.apiKeyEnabledCheckbox.isSelected():
         if newStatusCode == oldStatusCode and 50 < len(oldContent) < 7000:
-            # 改进缓存键生成机制，减少哈希碰撞风险
+            # 优化的缓存键生成机制：考虑URL、请求体、响应特征等多维度信息
             try:
-                # 为URL生成一个哈希值
-                url_hash = str(hash(oriUrl))
+                hasher = hashlib.md5()
                 
-                # 计算内容的4个采样点（前部、1/3处、2/3处、尾部）
+                # 1. URL 处理：分离路径和查询参数
+                url_parts = str(oriUrl).split('?', 1)
+                url_path = url_parts[0]
+                url_query = url_parts[1] if len(url_parts) > 1 else ""
+                
+                # 提取URL路径中的关键标识（如ID、用户名等数字/字母组合）
+                # 这样可以区分 /api/user/123 和 /api/user/456
+                path_identifiers = re.findall(r'/(\d+|[a-f0-9]{8,})', url_path, re.IGNORECASE)
+                
+                hasher.update(url_path.encode('utf-8'))
+                if path_identifiers:
+                    hasher.update('_'.join(path_identifiers).encode('utf-8'))
+                
+                # 处理查询参数：提取关键参数值（忽略timestamp等动态参数）
+                if url_query:
+                    # 排除常见的动态参数
+                    dynamic_params = ['timestamp', 'ts', 't', '_', 'nonce', 'random', 'callback']
+                    query_pairs = url_query.split('&')
+                    static_params = []
+                    for pair in query_pairs:
+                        if '=' in pair:
+                            key = pair.split('=')[0].lower()
+                            if key not in dynamic_params:
+                                static_params.append(pair)
+                    if static_params:
+                        hasher.update('&'.join(sorted(static_params)).encode('utf-8'))
+                
+                # 2. 请求体处理：如果存在，提取关键特征
+                if oriBody and len(oriBody) > 0:
+                    try:
+                        # 尝试解析为JSON并提取关键字段
+                        body_str = str(oriBody)
+                        # 提取可能的ID、用户名等关键字段值
+                        key_patterns = [
+                            r'"(?:id|user_?id|account_?id)":\s*"?([^",}\s]+)"?',
+                            r'"(?:name|username|account)":\s*"([^"]+)"',
+                            r'"(?:target|resource)_?(?:id|name)":\s*"?([^",}\s]+)"?'
+                        ]
+                        body_keys = []
+                        for pattern in key_patterns:
+                            try:
+                                matches = re.findall(pattern, body_str, re.IGNORECASE)
+                                body_keys.extend(matches)
+                            except (AttributeError, TypeError) as re_err:
+                                # 正则匹配失败：跳过此模式
+                                continue
+                        
+                        if body_keys:
+                            hasher.update('_'.join(body_keys).encode('utf-8'))
+                        else:
+                            # 如果没有匹配到关键字段，使用请求体的哈希（限制长度）
+                            body_sample = body_str[:200] if len(body_str) > 200 else body_str
+                            hasher.update(body_sample.encode('utf-8'))
+                    except (UnicodeDecodeError, UnicodeEncodeError) as enc_err:
+                        # 编码错误：使用哈希值
+                        print("[CACHE] Body encoding error, using hash: %s" % str(enc_err)[:50])
+                        if len(oriBody) > 0:
+                            body_hash = str(hash(str(oriBody)[:500]))
+                            hasher.update(body_hash.encode('utf-8'))
+                    except (AttributeError, TypeError) as type_err:
+                        # 类型错误：Body可能不是字符串
+                        print("[CACHE] Body type error: %s" % str(type_err)[:50])
+                        try:
+                            body_hash = str(hash(oriBody))
+                            hasher.update(body_hash.encode('utf-8'))
+                        except:
+                            pass
+                
+                # 3. 状态码
+                hasher.update(str(oldStatusCode).encode('utf-8'))
+                hasher.update(str(newStatusCode).encode('utf-8'))
+                
+                # 4. 响应内容特征提取（优化的采样策略）
                 old_len = len(oldContent)
                 new_len = len(newContent)
                 
-                old_third = old_len // 3
-                new_third = new_len // 3
-                
-                old_samples = [
-                    oldContent[:50],
-                    oldContent[old_third:old_third+50] if old_len > 150 else "",
-                    oldContent[2*old_third:2*old_third+50] if old_len > 300 else "",
-                    oldContent[-50:] if old_len > 50 else ""
-                ]
-                
-                new_samples = [
-                    newContent[:50],
-                    newContent[new_third:new_third+50] if new_len > 150 else "",
-                    newContent[2*new_third:2*new_third+50] if new_len > 300 else "",
-                    newContent[-50:] if new_len > 50 else ""
-                ]
-                
-                hasher = hashlib.md5()
-                hasher.update(url_hash.encode('utf-8'))
-                hasher.update(str(oldStatusCode).encode('utf-8'))
-                hasher.update(str(newStatusCode).encode('utf-8'))
+                # 响应长度差异是重要特征
                 hasher.update(str(old_len).encode('utf-8'))
                 hasher.update(str(new_len).encode('utf-8'))
                 
+                # 智能采样：避开可能的动态字段（如开头的timestamp、requestId等）
+                # 从第100字符开始采样（跳过可能的元数据），然后在1/3、2/3和尾部采样
+                def get_smart_samples(content, length):
+                    samples = []
+                    if length > 100:
+                        # 跳过前100字符（可能的动态元数据区域）
+                        samples.append(content[100:150])
+                        if length > 400:
+                            # 中间区域采样（通常是业务数据）
+                            third = length // 3
+                            samples.append(content[third:third+50])
+                            samples.append(content[2*third:2*third+50])
+                        if length > 100:
+                            # 尾部采样（避免最后50字符，可能有动态footer）
+                            samples.append(content[-100:-50] if length > 100 else content[-50:])
+                    else:
+                        # 内容较短，直接全部使用
+                        samples.append(content)
+                    return samples
+                
+                old_samples = get_smart_samples(oldContent, old_len)
+                new_samples = get_smart_samples(newContent, new_len)
+                
+                # 将样本加入哈希计算
                 for sample in old_samples + new_samples:
                     if sample:
                         try:
                             hasher.update(sample.encode('utf-8'))
-                        except UnicodeDecodeError:
-                            hasher.update(str(hash(sample)).encode('utf-8'))
+                        except (UnicodeDecodeError, UnicodeEncodeError):
+                            # 编码错误：使用哈希值替代
+                            try:
+                                hasher.update(str(hash(sample)).encode('utf-8'))
+                            except (AttributeError, TypeError) as attr_err:
+                                # 非字符串类型或None：跳过此样本
+                                print("[CACHE] Sample encoding failed, skipping: %s" % str(attr_err)[:50])
                 
                 cache_key = hasher.hexdigest()
                 
+            except (AttributeError, TypeError) as type_err:
+                # 类型错误：URL或Body可能为None
+                cache_key = str(hash(str(oriUrl) if oriUrl else "none"))
+                print("[CACHE WARNING] Type error in cache key generation: %s" % str(type_err))
             except Exception as e:
-                cache_key = str(hash(oriUrl))
-                print("Error generating cache key: " + str(e))
+                # 其他未预期错误：使用降级策略
+                cache_key = str(hash(str(oriUrl) + str(oriBody)[:100] if oriBody else ""))
+                log_exception(e, context="Cache key generation", level="WARNING")
             
             # 使用锁保护缓存访问操作
             cache_hit = False
@@ -480,48 +617,84 @@ def checkBypass(self, oriUrl, oriBody, oldStatusCode, newStatusCode, oldContent,
                         cache_access_order.remove(cache_key)
                     cache_access_order.append(cache_key)
                     cache_hit = True
-                    cache_hit_json = {
-                        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "action": "cache_hit",
-                        "url": str(oriUrl),  # 确保转换为字符串
-                        "result": AI_res
-                    }
-                    print("Cache Hit: " + json.dumps(cache_hit_json, ensure_ascii=False))
+                    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    print("=" * 80)
+                    print("[CACHE HIT] %s" % timestamp)
+                    print("URL: %s" % str(oriUrl))
+                    print("Result: %s" % AI_res)
+                    print("-" * 80)
 
             # 只有在缓存未命中时才执行API调用
             if not cache_hit:
-                apiKey = self.apiKeyField.getText()
+                try:
+                    apiKey = self.apiKeyField.getText()
+                except (AttributeError, RuntimeError) as e:
+                    # RuntimeError 可能包含 Java NullPointerException
+                    print("[CONFIG ERROR] Failed to get API key: %s" % str(e))
+                    apiKey = None
+                except Exception as e:
+                    # 捕获其他可能的 Java 异常
+                    error_msg = str(e).lower()
+                    if 'null' in error_msg or 'none' in error_msg:
+                        print("[CONFIG ERROR] API key field is null")
+                    else:
+                        print("[CONFIG ERROR] Failed to get API key: %s" % str(e))
+                    apiKey = None
+                
                 try:
                     modelName = self.aiModelTextField.getText()
-                except:
+                except (AttributeError, RuntimeError) as e:
+                    # RuntimeError 可能包含 Java NullPointerException
+                    print("[CONFIG ERROR] Failed to get model name: %s" % str(e))
+                    modelName = None
+                except Exception as e:
+                    # 捕获其他可能的 Java 异常
+                    error_msg = str(e).lower()
+                    if 'null' in error_msg or 'none' in error_msg:
+                        print("[CONFIG ERROR] Model name field is null")
+                    else:
+                        print("[CONFIG ERROR] Failed to get model name: %s" % str(e))
                     modelName = None
                     
-                if apiKey and modelName:
+                # 如果设置了自定义API URL，允许API Key为空（如Ollama）
+                if modelName and (apiKey or (hasattr(self, "aiApiUrlField") and self.aiApiUrlField is not None and self.aiApiUrlField.getText().strip())):
                     api_result_mapping = {
                         "true": self.BYPASSSED_STR,
                         "false": self.ENFORCED_STR,
                         "unknown": self.IS_ENFORCED_STR
                     }
                     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    api_request_json = {
-                        "timestamp": timestamp,
-                        "action": "api_request",
-                        "url": str(oriUrl),
-                        "model": modelName
-                    }
-                    print("API Request: " + json.dumps(api_request_json, ensure_ascii=False))
+                    print("=" * 80)
+                    print("[AI ANALYSIS] %s" % timestamp)
+                    print("URL: %s" % str(oriUrl))
+                    print("Model: %s" % modelName)
                     
+                    # 调用AI分析，customApiUrl会在call_dashscope_api中自动获取
                     AI_result = call_dashscope_api(self, apiKey, modelName, oriUrl, oriBody, oldContent, newContent)
-                    AI_res = api_result_mapping.get(AI_result, AI_result)
                     
-                    api_result_json = {
-                        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "action": "api_result",
-                        "url": str(oriUrl),
-                        "result": AI_result,
-                        "mapped_value": AI_res
-                    }
-                    print("API Result: " + json.dumps(api_result_json, ensure_ascii=False))
+                    # 检查是否成功获取结果
+                    if not AI_result or AI_result == "":
+                        print("[WARNING] AI analysis returned empty result")
+                        print("  URL: %s" % str(oriUrl))
+                        print("  Model: %s" % modelName)
+                        print("  Please check:")
+                        print("    1. API Key is correct")
+                        print("    2. Model name is correct")
+                        print("    3. API URL is accessible (if using custom URL)")
+                        print("    4. Network connection is stable")
+                        print("    5. Check error messages above for details")
+                        print("-" * 80)
+                        AI_res = ""
+                    else:
+                        AI_res = api_result_mapping.get(AI_result, AI_result)
+                        
+                        # 获取AI分析的原因（从最后一次API响应中提取）
+                        ai_reason = getattr(self, '_last_ai_reason', '')
+                        
+                        print("Result: %s -> %s" % (AI_result, AI_res))
+                        if ai_reason:
+                            print("Reason: %s" % ai_reason)
+                        print("-" * 80)
                     
                     # 缓存结果时获取锁
                     if AI_res:  # 只在有结果时缓存
@@ -537,8 +710,12 @@ def checkBypass(self, oriUrl, oriBody, oldStatusCode, newStatusCode, oldContent,
                                         oldest_key = cache_access_order.pop(0)
                                         if oldest_key in ai_analysis_cache:
                                             ai_analysis_cache.pop(oldest_key)
+                                except (IndexError, KeyError) as e:
+                                    # 索引或键错误：缓存状态不一致，重置
+                                    print("[CACHE ERROR] Cache state inconsistent: %s, resetting..." % str(e))
+                                    cache_access_order = []
                                 except Exception as e:
-                                    print("Error managing cache: " + str(e))
+                                    log_exception(e, context="Cache cleanup", level="WARNING")
 
     auth_enforced = False
     if filters:
@@ -774,17 +951,41 @@ def read_response(self, stream):
 
 
 def extract_res_value(self, response_string):
+    """提取AI分析结果，返回包含res和reason的字典"""
     try:
         if not response_string or response_string.strip() == "":
-            return ""
+            return {"res": "", "reason": ""}
+        
+        # 首先尝试解析Ollama/OpenAI格式的响应（包含choices字段）
+        try:
+            parsed_response = json.loads(response_string)
+            if isinstance(parsed_response, dict) and 'choices' in parsed_response:
+                choices = parsed_response.get('choices', [])
+                if choices and len(choices) > 0:
+                    message = choices[0].get('message', {})
+                    content = message.get('content', '')
+                    if content:
+                        # 递归调用处理content内容
+                        return extract_res_value(self, content)
+        except ValueError as json_err:
+            # JSON 解析失败：不是有效的 JSON 格式，继续其他解析方式
+            pass
+        except (KeyError, IndexError, TypeError) as struct_err:
+            # 结构错误：JSON 结构不符合预期
+            print("[AI PARSE] Unexpected response structure: %s" % str(struct_err)[:50])
+        except Exception as e:
+            # 其他错误
+            print("[AI PARSE] Error parsing Ollama/OpenAI format: %s" % str(e)[:50])
             
         code_block_match = CODE_BLOCK_PATTERN.search(response_string)
         if code_block_match:
             content_to_process = code_block_match.group(1).strip()
             res_in_block = RES_FIELD_PATTERN.search(content_to_process)
             if res_in_block:
-                print("Complete AI Analysis: " + content_to_process)
-                return res_in_block.group(1).lower()
+                res_value = res_in_block.group(1).lower()
+                # 尝试提取reason
+                reason = _extract_reason_from_json(content_to_process)
+                return {"res": res_value, "reason": reason}
         else:
             content_to_process = response_string
         
@@ -812,13 +1013,17 @@ def extract_res_value(self, response_string):
                         try:
                             parsed_json = json.loads(json_obj)
                             if 'res' in parsed_json and 'reason' in parsed_json:
-                                print("Complete AI Analysis: " + json_obj)
+                                res_value = str(parsed_json.get('res', '')).lower()
+                                reason = str(parsed_json.get('reason', ''))
+                                return {"res": res_value, "reason": reason}
                         except:
                             pass
                 except:
                     pass
                 
-                return match.group(1).lower()
+                res_value = match.group(1).lower()
+                reason = _extract_reason_from_json(content_to_process)
+                return {"res": res_value, "reason": reason}
         
         hunyuan_match = HUNYUAN_CONTENT_PATTERN.search(content_to_process)
         if hunyuan_match:
@@ -826,23 +1031,56 @@ def extract_res_value(self, response_string):
             content = content.replace('\\n', '\n').replace('\\\"', '\"').replace('\\\\', '\\')
             res_in_content = RES_FIELD_PATTERN.search(content)
             if res_in_content:
+                res_value = res_in_content.group(1).lower()
+                reason = _extract_reason_from_json(content)
                 print("Complete AI Analysis: " + content)
-                return res_in_content.group(1).lower()
+                return {"res": res_value, "reason": reason}
             
         loose_match = LOOSE_PATTERN.search(content_to_process)
         if loose_match:
             context_start = max(0, loose_match.start() - 50)
             context_end = min(len(content_to_process), loose_match.end() + 50)
             context = content_to_process[context_start:context_end]
-            print("AI Analysis Context: " + context)
             # 由于修改了正则表达式，现在有多个捕获组，需要找到第一个非None的捕获组
             for i in range(1, len(loose_match.groups()) + 1):
                 if loose_match.group(i):
-                    return loose_match.group(i).lower()
+                    res_value = loose_match.group(i).lower()
+                    reason = _extract_reason_from_json(content_to_process)
+                    return {"res": res_value, "reason": reason}
             
-        return ""
+        return {"res": "", "reason": ""}
     except Exception as e:
         print("Error in extract_res_value: " + str(e))
+        return {"res": "", "reason": ""}
+
+def _extract_reason_from_json(content):
+    """从内容中提取reason字段（模块级函数）"""
+    try:
+        # 尝试找到JSON对象
+        json_start = content.find('{')
+        if json_start >= 0:
+            # 尝试找到完整的JSON对象（可能需要处理嵌套）
+            brace_count = 0
+            json_end = -1
+            for i in range(json_start, len(content)):
+                if content[i] == '{':
+                    brace_count += 1
+                elif content[i] == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        json_end = i
+                        break
+            
+            if json_end > json_start:
+                json_obj = content[json_start:json_end+1]
+                try:
+                    parsed_json = json.loads(json_obj)
+                    if 'reason' in parsed_json:
+                        return str(parsed_json.get('reason', ''))
+                except:
+                    pass
+        return ""
+    except:
         return ""
 
 
@@ -882,8 +1120,30 @@ def generate_prompt(self, modelName, system_prompt, user_prompt):
             """ % (modelName, system_prompt, user_prompt)
 
 
-def call_dashscope_api(self, apiKey, modelName, oriUrl, oriBody, res1, res2):
-    if apiKey is None:
+def call_dashscope_api(self, apiKey, modelName, oriUrl, oriBody, res1, res2, customApiUrl=""):
+    # 获取自定义API URL（如果设置了）
+    # 如果参数为空，则从配置界面获取（向后兼容：如果aiApiUrlField不存在也不会报错）
+    # Jython 2.7: getText()返回Java String，可以直接使用strip()，但需要转换为Python字符串进行比较
+    if not customApiUrl:
+        try:
+            if hasattr(self, "aiApiUrlField") and self.aiApiUrlField is not None:
+                url_text = self.aiApiUrlField.getText()
+                if url_text is not None:
+                    # Jython 2.7: Java String的strip()方法可用，转换为Python字符串
+                    customApiUrl = str(url_text).strip()
+                    # 如果是占位符文本，视为空
+                    placeholder = "http://localhost:11434/v1/chat/completions"
+                    if customApiUrl == placeholder:
+                        customApiUrl = ""
+                else:
+                    customApiUrl = ""
+        except:
+            customApiUrl = ""
+    
+    # 如果既没有API Key也没有自定义URL，则返回unknown
+    # 注意：如果设置了自定义URL（如Ollama），即使没有API Key也应该继续
+    # Jython 2.7: 确保字符串比较正确
+    if (not apiKey or str(apiKey).strip() == "") and (not customApiUrl or str(customApiUrl).strip() == ""):
         return "unknown"
 
     if self.replaceQueryParam.isSelected():
@@ -928,7 +1188,7 @@ def call_dashscope_api(self, apiKey, modelName, oriUrl, oriBody, res1, res2):
         res_user_prompt = "Response A: %s, Response B: %s" % (res1, res2)
         request_body = generate_prompt(self, modelName, escape_special_characters(self, res_system_prompt),
                                        escape_special_characters(self, res_user_prompt))
-        AI_res = request_dashscope_api(self, apiKey, modelName, oriUrl, request_body)
+        AI_res = request_dashscope_api(self, apiKey, modelName, oriUrl, request_body, customApiUrl)
         return AI_res
     else:
         res_system_prompt = """**角色描述**：你是一个判断是否存在越权的分析机器人，通过对比两个 HTTP 请求响应数据包的相似性，判断是否存在越权漏洞，并根据要求给出判断结果。
@@ -973,11 +1233,11 @@ def call_dashscope_api(self, apiKey, modelName, oriUrl, oriBody, res1, res2):
         res_user_prompt = "Response A: %s, Response B: %s" % (res1, res2)
         request_body = generate_prompt(self, modelName, escape_special_characters(self, res_system_prompt),
                                        escape_special_characters(self, res_user_prompt))
-        AI_res = request_dashscope_api(self, apiKey, modelName, oriUrl, request_body)
+        AI_res = request_dashscope_api(self, apiKey, modelName, oriUrl, request_body, customApiUrl)
         return AI_res
 
 
-def request_dashscope_api(self, api_key, modelName, orgUrl, request_body):
+def request_dashscope_api(self, api_key, modelName, orgUrl, request_body, customApiUrl=""):
     max_retries = 3
     retry_count = 0
     retry_delay = 2  # 基础延迟（秒）
@@ -995,11 +1255,24 @@ def request_dashscope_api(self, api_key, modelName, orgUrl, request_body):
         "default": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
     }
     
-    api_url = api_endpoints["default"]
-    for prefix, endpoint in api_endpoints.items():
-        if modelName.lower().startswith(prefix):
-            api_url = endpoint
-            break
+    # 如果设置了自定义API URL，优先使用自定义URL
+    # Jython 2.7: 确保正确处理Java String类型
+    if customApiUrl:
+        api_url = str(customApiUrl).strip()
+        if not api_url:
+            # 如果转换后为空，使用默认端点
+            api_url = api_endpoints["default"]
+            for prefix, endpoint in api_endpoints.items():
+                if modelName.lower().startswith(prefix):
+                    api_url = endpoint
+                    break
+    else:
+        # 否则根据模型名称选择默认端点
+        api_url = api_endpoints["default"]
+        for prefix, endpoint in api_endpoints.items():
+            if modelName.lower().startswith(prefix):
+                api_url = endpoint
+                break
     
     while retry_count < max_retries:
         connection = None
@@ -1034,7 +1307,12 @@ def request_dashscope_api(self, api_key, modelName, orgUrl, request_body):
 
             # 设置通用请求头
             connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            connection.setRequestProperty("Authorization", "Bearer " + api_key)
+            # 只有当API Key存在时才设置Authorization头（Ollama等本地模型不需要）
+            # Jython 2.7: 确保正确处理Java String类型
+            if api_key:
+                api_key_str = str(api_key).strip()
+                if api_key_str:
+                    connection.setRequestProperty("Authorization", "Bearer " + api_key_str)
             
             outputStream = connection.getOutputStream()
             writer = OutputStreamWriter(outputStream, "UTF-8")
@@ -1046,24 +1324,23 @@ def request_dashscope_api(self, api_key, modelName, orgUrl, request_body):
             if responseCode == HttpURLConnection.HTTP_OK or responseCode == HttpURLConnection.HTTP_CREATED:
                 inputStream = connection.getInputStream()
                 AI_res = read_response(self, inputStream)
-                res_value = extract_res_value(self, AI_res)
+                result_dict = extract_res_value(self, AI_res)
+                res_value = result_dict.get("res", "")
+                reason = result_dict.get("reason", "")
                 
-                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                json_log = '{\n' \
-                           '\t"timestamp": "%s",\n ' \
-                           '\t"orig_url": "%s",\n ' \
-                           '\t"ai_api_status": "%s",\n ' \
-                           '\t"ai_analysis_result": "%s",\n ' \
-                           '\t"ai_original_response": "%s"\n ' \
-                           '}\n' % (
-                               timestamp,
-                               str(orgUrl),
-                               str(responseCode),
-                               str(res_value),
-                               str(AI_res) if str(AI_res) else 'N/A'
-                           )
-
-                print(json_log)
+                # 保存reason以便后续使用
+                self._last_ai_reason = reason
+                
+                # 如果结果为空，输出警告
+                if not res_value:
+                    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    print("[WARNING] Failed to extract AI analysis result")
+                    print("  URL: %s" % str(orgUrl))
+                    print("  Status: %s" % str(responseCode))
+                    print("  Response length: %d" % (len(str(AI_res)) if AI_res else 0))
+                    if AI_res and len(str(AI_res)) < 500:
+                        print("  Response preview: %s" % str(AI_res)[:200])
+                    print("-" * 80)
                 
                 if res_value:
                     return res_value
@@ -1111,35 +1388,82 @@ def request_dashscope_api(self, api_key, modelName, orgUrl, request_body):
                             jitter = rand.nextFloat() * base_delay * jitter_factor * 2 - base_delay * jitter_factor
                             wait_time = base_delay + jitter
                             
+                            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            print("[API ERROR] %s (Retry %d/%d)" % (error_type, retry_count, max_retries))
+                            print("  URL: %s" % str(orgUrl))
+                            print("  Status: %s" % str(responseCode))
+                            print("  Error: %s" % error_response[:200] if error_response else "Unknown error")
+                            print("  Retrying in %.1f seconds..." % wait_time)
+                            print("-" * 80)
+                            
                             time.sleep(wait_time)
                             continue
                     
+                    # 最终失败，输出错误信息
+                    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    print("[API ERROR] Request failed after %d retries" % max_retries)
+                    print("  URL: %s" % str(orgUrl))
+                    print("  Status: %s" % str(responseCode))
+                    print("  Error: %s" % error_response[:500] if error_response else "Unknown error")
+                    print("-" * 80)
                     return ""
                 else:
+                    # 没有错误流，但状态码不是200
+                    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    print("[API ERROR] Request failed with status code %s" % str(responseCode))
+                    print("  URL: %s" % str(orgUrl))
+                    print("  No error response available")
+                    print("-" * 80)
                     return ""
                 
         except SSLHandshakeException as e:
             retry_count += 1
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             if retry_count == max_retries:
+                print("[API ERROR] SSL Handshake failed after %d retries" % max_retries)
+                print("  URL: %s" % str(orgUrl))
+                print("  Error: %s" % str(e))
+                print("-" * 80)
                 return ""
+            print("[API ERROR] SSL Handshake failed (Retry %d/%d): %s" % (retry_count, max_retries, str(e)))
             continue
             
         except EOFException as e:
             retry_count += 1
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             if retry_count == max_retries:
+                print("[API ERROR] Connection closed unexpectedly after %d retries" % max_retries)
+                print("  URL: %s" % str(orgUrl))
+                print("  Error: %s" % str(e))
+                print("-" * 80)
                 return ""
+            print("[API ERROR] Connection closed (Retry %d/%d): %s" % (retry_count, max_retries, str(e)))
             continue
             
         except SocketException as e:
             retry_count += 1
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             if retry_count == max_retries:
+                print("[API ERROR] Network error after %d retries" % max_retries)
+                print("  URL: %s" % str(orgUrl))
+                print("  Error: %s" % str(e))
+                print("-" * 80)
                 return ""
+            print("[API ERROR] Network error (Retry %d/%d): %s" % (retry_count, max_retries, str(e)))
             continue
             
         except Exception as e:
             retry_count += 1
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             if retry_count == max_retries:
+                print("[API ERROR] Unexpected error after %d retries" % max_retries)
+                print("  URL: %s" % str(orgUrl))
+                print("  Error: %s" % str(e))
+                import traceback
+                print("  Traceback: %s" % traceback.format_exc()[:500])
+                print("-" * 80)
                 return ""
+            print("[API ERROR] Unexpected error (Retry %d/%d): %s" % (retry_count, max_retries, str(e)))
             continue
         finally:
             # 确保所有资源都被正确关闭

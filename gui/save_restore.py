@@ -88,6 +88,20 @@ class SaveRestore():
                     except:
                         pass
 
+                # 保存自定义API URL（忽略占位符文本）
+                if hasattr(self._extender, "aiApiUrlField") and self._extender.aiApiUrlField is not None:
+                    try:
+                        apiUrl = self._extender.aiApiUrlField.getText()
+                        if apiUrl is not None:
+                            apiUrl = str(apiUrl).strip()
+                            # 如果是占位符文本，不保存
+                            placeholder = "http://localhost:11434/v1/chat/completions"
+                            if apiUrl and apiUrl != placeholder:
+                                tempRow = ["AiApiUrl", base64.b64encode(apiUrl)]
+                                csvwriter.writerow(tempRow)
+                    except:
+                        pass
+
                 for EDFilter in self._extender.EDModel.toArray():
                     tempRow = ["EDFilter", base64.b64encode(EDFilter)]
                     csvwriter.writerow(tempRow)
@@ -105,13 +119,26 @@ class SaveRestore():
                     csvwriter.writerow(tempRow)
 
                 # 保存Temporary headers（只保存type为Headers (simple string): 和 Headers (regex): 的项，避免和MatchReplace混淆）
+                temp_headers_count = 0
                 for key in self._extender.badProgrammerMRModel:
-                    d = dict(self._extender.badProgrammerMRModel[key])
-                    d["regexMatch"] = d["regexMatch"] is not None
-                    # 只保存Headers类型的临时header
-                    if d["type"].startswith("Headers"):
-                        tempRow = ["TemporaryHeader", base64.b64encode(json.dumps(d))]
-                        csvwriter.writerow(tempRow)
+                    try:
+                        d = dict(self._extender.badProgrammerMRModel[key])
+                        d["regexMatch"] = d["regexMatch"] is not None
+                        # 只保存Headers类型的临时header
+                        if d["type"].startswith("Headers"):
+                            # JSON序列化
+                            json_str = json.dumps(d, ensure_ascii=False)
+                            
+                            # Base64编码 - Jython 2.7中base64.b64encode可以直接接受unicode字符串
+                            encoded = base64.b64encode(json_str)
+                            tempRow = ["TemporaryHeader", encoded]
+                            csvwriter.writerow(tempRow)
+                            temp_headers_count += 1
+                    except Exception as e:
+                        print("Error saving temporary header: " + str(e))
+                        # 继续处理下一个，不中断整个保存过程
+                        continue
+                
 
                 d = dict((c, getattr(self._extender, c).isSelected()) for c in self._checkBoxes)
                 tempRow = ["CheckBoxes", json.dumps(d)]
@@ -127,10 +154,25 @@ class SaveRestore():
                 csvwriter.writerow(tempRow)
 
                 # 保存所有自定义header配置（savedHeaders）
-                print("[DEBUG] saveState: savedHeaders count:", len(self._extender.savedHeaders))
+                saved_headers_count = 0
                 for headerObj in self._extender.savedHeaders:
-                    tempRow = ["SavedHeader", base64.b64encode(json.dumps(headerObj))]
-                    csvwriter.writerow(tempRow)
+                    try:
+                        # 确保headerObj是字典类型
+                        if not isinstance(headerObj, dict):
+                            continue
+                        
+                        # JSON序列化
+                        json_str = json.dumps(headerObj, ensure_ascii=False)
+                        
+                        # Base64编码 - Jython 2.7中base64.b64encode可以直接接受unicode字符串
+                        encoded = base64.b64encode(json_str)
+                        tempRow = ["SavedHeader", encoded]
+                        csvwriter.writerow(tempRow)
+                        saved_headers_count += 1
+                    except Exception as e:
+                        print("Error saving header configuration: " + str(e))
+                        # 继续处理下一个，不中断整个保存过程
+                        continue
 
                 # Request/response list
                 for i in range(0,self._extender._log.size()):
@@ -210,6 +252,14 @@ class SaveRestore():
                         except Exception as e:
                             pass
                         continue
+                    
+                    if row[0] == "AiApiUrl" and hasattr(self._extender, "aiApiUrlField"):
+                        try:
+                            if self._extender.aiApiUrlField is not None:
+                                self._extender.aiApiUrlField.setText(base64.b64decode(row[1]))
+                        except Exception as e:
+                            pass
+                        continue
 
                     if row[0] in modelMap:
                         f = base64.b64decode(row[1])
@@ -222,33 +272,65 @@ class SaveRestore():
                         continue
 
                     if row[0] == "MatchReplace":
-                        d = json.loads(base64.b64decode(row[1]))
-                        key = d["type"] + " " + d["match"] + "->" + d["replace"]
-                        if key in self._extender.badProgrammerMRModel:
-                            continue
-                        regexMatch = None
-                        if d["regexMatch"]:
-                            try:
-                                d["regexMatch"] = re.compile(d["match"])
-                            except re.error:
+                        try:
+                            # Base64解码 - Jython 2.7中base64.b64decode返回字符串
+                            decoded_str = base64.b64decode(row[1])
+                            
+                            # JSON反序列化
+                            d = json.loads(decoded_str)
+                            
+                            # 验证数据结构
+                            if not isinstance(d, dict):
                                 continue
-                        self._extender.badProgrammerMRModel[key] = d
-                        self._extender.MRModel.addElement(key)
+                            
+                            key = d["type"] + " " + d["match"] + "->" + d["replace"]
+                            if key in self._extender.badProgrammerMRModel:
+                                continue
+                                
+                            regexMatch = None
+                            if d["regexMatch"]:
+                                try:
+                                    d["regexMatch"] = re.compile(d["match"])
+                                except re.error:
+                                    continue
+                                
+                            self._extender.badProgrammerMRModel[key] = d
+                            self._extender.MRModel.addElement(key)
+                        except Exception as e:
+                            print("Error restoring match/replace rule: " + str(e))
+                            # 继续处理下一个，不中断整个恢复过程
+                            continue
                         continue
 
                     if row[0] == "TemporaryHeader":
-                        d = json.loads(base64.b64decode(row[1]))
-                        key = d["type"] + " " + d["match"] + "->" + d["replace"]
-                        if key in self._extender.badProgrammerMRModel:
-                            continue
-                        regexMatch = None
-                        if d["regexMatch"]:
-                            try:
-                                d["regexMatch"] = re.compile(d["match"])
-                            except re.error:
+                        try:
+                            # Base64解码 - Jython 2.7中base64.b64decode返回字符串
+                            decoded_str = base64.b64decode(row[1])
+                            
+                            # JSON反序列化
+                            d = json.loads(decoded_str)
+                            
+                            # 验证数据结构
+                            if not isinstance(d, dict):
                                 continue
-                        self._extender.badProgrammerMRModel[key] = d
-                        self._extender.MRModel.addElement(key)
+                            
+                            key = d["type"] + " " + d["match"] + "->" + d["replace"]
+                            if key in self._extender.badProgrammerMRModel:
+                                continue
+                                
+                            regexMatch = None
+                            if d["regexMatch"]:
+                                try:
+                                    d["regexMatch"] = re.compile(d["match"])
+                                except re.error:
+                                    continue
+                                    
+                            self._extender.badProgrammerMRModel[key] = d
+                            self._extender.MRModel.addElement(key)
+                        except Exception as e:
+                            print("Error restoring temporary header: " + str(e))
+                            # 继续处理下一个，不中断整个恢复过程
+                            continue
                         continue
 
                     if row[0] == "CheckBoxes":
@@ -270,8 +352,25 @@ class SaveRestore():
                         continue
 
                     if row[0] == "SavedHeader":
-                        headerObj = json.loads(base64.b64decode(row[1]))
-                        self._extender.savedHeaders.append(headerObj)
+                        try:
+                            # Base64解码 - Jython 2.7中base64.b64decode返回字符串
+                            decoded_str = base64.b64decode(row[1])
+                            
+                            # JSON反序列化
+                            headerObj = json.loads(decoded_str)
+                            
+                            # 验证数据结构
+                            if not isinstance(headerObj, dict):
+                                continue
+                            
+                            if 'title' not in headerObj or 'headers' not in headerObj:
+                                continue
+                            
+                            self._extender.savedHeaders.append(headerObj)
+                        except Exception as e:
+                            print("Error restoring saved header: " + str(e))
+                            # 继续处理下一个，不中断整个恢复过程
+                            continue
                         continue
 
                     tempRequestResponseHost = row[0]
@@ -348,7 +447,6 @@ class SaveRestore():
                         self._extender.lastAuthorizationHeader = authorizationHeader
                         self._extender.fetchAuthorizationHeaderButton.setEnabled(True)
 
-                print("[DEBUG] restoreState: savedHeaders count:", len(self._extender.savedHeaders))
                 # 还原完所有SavedHeader后，刷新下拉框并选中第一个，触发事件同步内容
                 if hasattr(self._extender, 'savedHeadersTitlesCombo'):
                     from javax.swing import DefaultComboBoxModel

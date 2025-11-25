@@ -109,6 +109,10 @@ STRINGS = {
     "ai_analyzer": u"AI分析器",
     "ai_key": u"API密钥",
     "ai_model": u"模型",
+    "ai_api_url": u"API地址（可选）",
+    "ai_api_url_label": u"URL:",
+    "ai_api_url_placeholder": u"http://localhost:11434/v1/chat/completions",
+    "ai_api_url_tooltip": u"留空使用默认API地址。设置自定义地址以支持私有大模型部署（例如：Ollama使用 http://localhost:11434/v1/chat/completions）。",
     
     # 认证头配置
     "auth_headers_label": u"认证头类型配置:",

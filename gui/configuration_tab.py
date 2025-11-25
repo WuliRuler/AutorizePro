@@ -27,6 +27,7 @@ from javax.swing import ComboBoxEditor
 from javax.swing import JPopupMenu, JMenuItem
 from java.awt import Dimension
 from javax.swing.event import DocumentListener
+from java.awt.event import FocusListener
 
 from table import UpdateTableEDT
 from localization.language_manager import get_text, get_language_manager
@@ -56,10 +57,12 @@ class ConfigurationTab():
         self._extender.toggleLanguageButton = JButton(toggle_text, actionPerformed=self.toggleLanguage)
         self._extender.toggleLanguageButton.setBounds(245, 20, 60, 30)
 
-        self._extender.apiKeyField = JTextField(20)
-        self._extender.apiKeyField.setBounds(50, 100, 200, 30)
-        self._extender.apiKeyEnabledCheckbox = JCheckBox(get_text("enable_ai", "KEY"), actionPerformed=self.validateModelOnKeyToggle)
-        self._extender.apiKeyEnabledCheckbox.setBounds(10, 60, 100, 30)
+        # 添加API Key标签和输入框
+        apiKeyYPos = 100
+        self._extender.apiKeyLabel = JLabel("KEY:")
+        self._extender.apiKeyLabel.setBounds(10, apiKeyYPos, 40, 30)
+        self._extender.apiKeyField = JTextField(15)
+        self._extender.apiKeyField.setBounds(70, apiKeyYPos, 150, 30)
         # 改用文本框 + 下拉按钮组合来支持用户输入模型
         yPos = 140
         height = 25
@@ -69,6 +72,26 @@ class ConfigurationTab():
         
         self._extender.modelSelectButton = JButton("+", actionPerformed=self.showModelOptions)
         self._extender.modelSelectButton.setBounds(145, yPos, 25, height)
+        
+        # 添加自定义API URL输入框和标签
+        apiUrlYPos = yPos + 35
+        self._extender.aiApiUrlLabel = JLabel(get_text("ai_api_url_label", "URL:"))
+        self._extender.aiApiUrlLabel.setBounds(10, apiUrlYPos, 40, height)
+        # 使用与API Key输入框相同的宽度（150），保持一致性
+        placeholder_text = get_text("ai_api_url_placeholder", "http://localhost:11434/v1/chat/completions")
+        self._extender.aiApiUrlField = JTextField(placeholder_text, 15)
+        self._extender.aiApiUrlField.setBounds(50, apiUrlYPos, 150, height)
+        
+        # 添加"启用 AI"按钮在URL输入框右侧（与URL输入框同一行）
+        self._extender.apiKeyEnabledCheckbox = JToggleButton(get_text("enable_ai", "启用 AI"), actionPerformed=self.validateModelOnKeyToggle)
+        # 注意：GroupLayout会管理位置，setBounds仅作为初始位置参考
+        self._extender.apiKeyEnabledCheckbox.setBounds(210, apiUrlYPos, 80, height)
+        # 设置占位符文本颜色为灰色（通过设置前景色，当用户输入时会被覆盖）
+        from java.awt import Color
+        self._extender.aiApiUrlField.setForeground(Color.GRAY)
+        # 添加焦点监听器，实现占位符效果
+        self._extender.aiApiUrlField.addFocusListener(ApiUrlPlaceholderListener(self._extender, placeholder_text))
+        self._extender.aiApiUrlField.setToolTipText(get_text("ai_api_url_tooltip", "Leave empty to use default API endpoint. Set custom URL for private model deployment (e.g., http://localhost:11434/v1/chat/completions for Ollama)."))
         
         self._predefinedOptions = ["qwen-turbo", "qwen-plus", "qwen-max",
                                    "deepseek-chat","deepseek-reasoner",
@@ -194,7 +217,7 @@ class ConfigurationTab():
                     layout.createSequentialGroup()
                     .addGroup(layout.createParallelGroup(GroupLayout.Alignment.CENTER)
                     .addComponent(
-                        self._extender.apiKeyEnabledCheckbox,
+                        self._extender.apiKeyLabel,
                         GroupLayout.PREFERRED_SIZE,
                         GroupLayout.PREFERRED_SIZE,
                         GroupLayout.PREFERRED_SIZE,
@@ -222,6 +245,34 @@ class ConfigurationTab():
                         GroupLayout.PREFERRED_SIZE,
                         GroupLayout.PREFERRED_SIZE,
                     )
+                    )
+                    )
+                )
+                .addGroup(
+                    layout.createSequentialGroup()
+                    .addGroup(layout.createParallelGroup(GroupLayout.Alignment.CENTER)
+                    .addComponent(
+                        self._extender.aiApiUrlLabel,
+                        GroupLayout.PREFERRED_SIZE,
+                        GroupLayout.PREFERRED_SIZE,
+                        GroupLayout.PREFERRED_SIZE,
+                    )
+                    )
+                    .addGroup(layout.createParallelGroup(GroupLayout.Alignment.CENTER)
+                    .addComponent(
+                        self._extender.aiApiUrlField,
+                        GroupLayout.PREFERRED_SIZE,
+                        GroupLayout.PREFERRED_SIZE,
+                        GroupLayout.PREFERRED_SIZE,
+                    )
+                    )
+                    .addGap(15)
+                    .addGroup(layout.createParallelGroup(GroupLayout.Alignment.CENTER)
+                    .addComponent(
+                        self._extender.apiKeyEnabledCheckbox,
+                        GroupLayout.PREFERRED_SIZE,
+                        GroupLayout.PREFERRED_SIZE,
+                        GroupLayout.PREFERRED_SIZE,
                     )
                     )
                 )
@@ -374,7 +425,7 @@ class ConfigurationTab():
             )
             .addGroup(layout.createParallelGroup(GroupLayout.Alignment.CENTER)
             .addComponent(
-                self._extender.apiKeyEnabledCheckbox,
+                self._extender.apiKeyLabel,
                 GroupLayout.PREFERRED_SIZE,
                 GroupLayout.PREFERRED_SIZE,
                 GroupLayout.PREFERRED_SIZE,
@@ -401,6 +452,26 @@ class ConfigurationTab():
             )
             .addComponent(
                 self._extender.interceptRequestsfromRepeater,
+                GroupLayout.PREFERRED_SIZE,
+                GroupLayout.PREFERRED_SIZE,
+                GroupLayout.PREFERRED_SIZE,
+            )
+            )
+            .addGroup(layout.createParallelGroup(GroupLayout.Alignment.CENTER)
+            .addComponent(
+                self._extender.aiApiUrlLabel,
+                GroupLayout.PREFERRED_SIZE,
+                GroupLayout.PREFERRED_SIZE,
+                GroupLayout.PREFERRED_SIZE,
+            )
+            .addComponent(
+                self._extender.aiApiUrlField,
+                GroupLayout.PREFERRED_SIZE,
+                GroupLayout.PREFERRED_SIZE,
+                GroupLayout.PREFERRED_SIZE,
+            )
+            .addComponent(
+                self._extender.apiKeyEnabledCheckbox,
                 GroupLayout.PREFERRED_SIZE,
                 GroupLayout.PREFERRED_SIZE,
                 GroupLayout.PREFERRED_SIZE,
@@ -694,6 +765,24 @@ class ConfigurationTab():
                 )
                 self._extender.apiKeyEnabledCheckbox.setSelected(False)
                 return
+            
+            # 如果设置了自定义API URL，跳过模型验证（允许使用任何模型，如Ollama）
+            custom_api_url = ""
+            try:
+                if hasattr(self._extender, "aiApiUrlField") and self._extender.aiApiUrlField is not None:
+                    url_text = self._extender.aiApiUrlField.getText()
+                    if url_text is not None:
+                        custom_api_url = str(url_text).strip()
+                        # 如果是占位符文本，视为空
+                        placeholder = get_text("ai_api_url_placeholder", "http://localhost:11434/v1/chat/completions")
+                        if custom_api_url == placeholder:
+                            custom_api_url = ""
+            except:
+                pass
+            
+            # 如果设置了自定义API URL，允许使用任何模型
+            if custom_api_url:
+                return  # 跳过模型验证
                 
             if not self.validateModel(model_name):
                 message = get_text("unsupported_model", "Unsupported model vendor, please contact developer")
@@ -742,6 +831,35 @@ class ConfigurationTab():
     
     def selectModel(self, model):
         self._extender.aiModelTextField.setText(model)
+
+
+class ApiUrlPlaceholderListener(FocusListener):
+    """实现API URL输入框的占位符效果"""
+    def __init__(self, extender, placeholder):
+        self._extender = extender
+        self.placeholder = placeholder
+        self.is_placeholder = True
+        
+    def focusGained(self, e):
+        """获得焦点时，如果是占位符文本，清空并恢复正常颜色"""
+        if self.is_placeholder:
+            field = e.getSource()
+            if field.getText() == self.placeholder:
+                field.setText("")
+                from java.awt import Color
+                field.setForeground(Color.BLACK)
+                self.is_placeholder = False
+    
+    def focusLost(self, e):
+        """失去焦点时，如果为空，恢复占位符文本"""
+        field = e.getSource()
+        if not field.getText() or field.getText().strip() == "":
+            field.setText(self.placeholder)
+            from java.awt import Color
+            field.setForeground(Color.GRAY)
+            self.is_placeholder = True
+        else:
+            self.is_placeholder = False
 
 
 class SavedHeaderChange(ActionListener):

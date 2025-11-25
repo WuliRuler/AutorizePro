@@ -113,7 +113,11 @@ STRINGS = {
     "ai_analyzer": "AI Analyzer",
     "ai_key": "API Key",
     "ai_model": "Model",
-    "enable_ai": "KEY",
+    "ai_api_url": "API URL (Optional)",
+    "ai_api_url_label": "URL:",
+    "ai_api_url_placeholder": "http://localhost:11434/v1/chat/completions",
+    "ai_api_url_tooltip": "Leave empty to use default API endpoint. Set custom URL for private model deployment (e.g., http://localhost:11434/v1/chat/completions for Ollama).",
+    "enable_ai": "Enable AI",
     
     # Authentication headers
     "auth_headers_label": "Authentication Headers:",
